@@ -50,6 +50,13 @@ STRICT RULES FOR THE TEALSCRIPT CODE:
 
   const scratchDir = path.join(__dirname, '../../scratch');
   if (!fs.existsSync(scratchDir)) fs.mkdirSync(scratchDir);
+  
+  // Write a dedicated tsconfig for TEALScript to prevent it from reading the backend's root tsconfig
+  fs.writeFileSync(path.join(scratchDir, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: { target: "es2022", module: "commonjs" },
+    include: ["**/*"]
+  }));
+
   const contractPath = path.join(scratchDir, 'GeneratedApp.algo.ts');
 
   const modelsList = [
