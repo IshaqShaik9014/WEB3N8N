@@ -190,7 +190,7 @@ export default function Home() {
     setEdges(eds => eds.map(e => e.id === 'e1' ? { ...e, animated: true, style: { stroke: '#3b82f6', strokeWidth: 3 } } : e));
 
     try {
-      const res = await axios.post('http://127.0.0.1:5001/api/pipelines/generate-contract', { idea: ideaText });
+      const res = await axios.post('https://web3n8n.onrender.com/api/pipelines/generate-contract', { idea: ideaText });
       const data = res.data;
 
       // 1. AI Node Completes
