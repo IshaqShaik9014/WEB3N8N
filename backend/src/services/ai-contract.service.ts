@@ -45,6 +45,7 @@ STRICT RULES FOR THE TEALSCRIPT CODE:
 2. The class MUST be named "GeneratedApp" and extend "Contract".
 3. ONLY use valid TEALScript types like uint64, string, Address, AssetID, etc.
 4. Do NOT use decorators like @abi.view. Just write normal class methods.
+5. You MUST NOT define a constructor or createApplication method that takes arguments. The contract must be deployable with NO arguments.
 `;
 
   const scratchDir = path.join(__dirname, '../../scratch');

@@ -113,8 +113,8 @@ export const deployContract = async (approvalTeal: string, clearTeal: string, ab
       clearProgram: clearProgramBytes,
       numLocalInts: 0,
       numLocalByteSlices: 0,
-      numGlobalInts: 32, // Allocate plenty of state for AI contracts
-      numGlobalByteSlices: 32, // Allocate plenty of state for AI contracts
+      numGlobalInts: 4, // Reduced to lower deployment cost
+      numGlobalByteSlices: 2, // Reduced to lower deployment cost
       appArgs: appArgs
     });
 

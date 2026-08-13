@@ -1,8 +1,9 @@
 import React from 'react';
 import { Handle, Position } from 'reactflow';
+import { Lock } from 'lucide-react';
 
 export default function FrontendNode({ data }: any) {
-  const { status, frontendCode, onViewCode } = data;
+  const { status, frontendCode, onViewCode, paymentStatus, onPay } = data;
   
   // status: 'idle' | 'running' | 'completed' | 'error'
 
@@ -23,7 +24,22 @@ export default function FrontendNode({ data }: any) {
         {status === 'idle' && <span className="text-gray-500 italic">Waiting for deployment...</span>}
         {status === 'running' && <span className="text-pink-300">Writing React.js integration component...</span>}
         
-        {status === 'completed' && (
+        {status === 'completed' && paymentStatus === 'locked' && (
+          <div className="flex flex-col items-center justify-center h-full">
+            <Lock className="w-5 h-5 text-pink-500 mb-2" />
+            <span className="text-gray-400 text-[10px] text-center mb-1">Integration code is locked</span>
+            <span className="text-pink-400 font-bold text-xs">0.04 ALGO required</span>
+          </div>
+        )}
+
+        {status === 'completed' && paymentStatus === 'processing' && (
+          <div className="flex flex-col items-center justify-center h-full">
+            <div className="w-5 h-5 border-2 border-pink-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+            <span className="text-pink-400 text-xs">Confirming payment...</span>
+          </div>
+        )}
+
+        {status === 'completed' && paymentStatus === 'unlocked' && (
           <div className="flex flex-col gap-2 h-full justify-center">
             <span className="text-pink-400 font-bold block mb-1">✅ 1-Click dApp Ready!</span>
             <p className="text-gray-400 text-[10px]">
@@ -33,15 +49,24 @@ export default function FrontendNode({ data }: any) {
         )}
       </div>
 
-      <button
-        onClick={onViewCode}
-        disabled={status !== 'completed'}
-        className={`w-full text-xs font-bold py-1.5 px-3 rounded transition-colors shadow nodrag ${
-          status !== 'completed' ? 'bg-gray-800 text-gray-600' : 'bg-pink-600 hover:bg-pink-500 text-white'
-        }`}
-      >
-        View React Code
-      </button>
+      {status === 'completed' && paymentStatus === 'locked' ? (
+        <button
+          onClick={onPay}
+          className="w-full bg-pink-600 hover:bg-pink-500 text-white text-xs font-bold py-1.5 px-3 rounded transition-colors shadow nodrag"
+        >
+          Pay 0.04 ALGO to Unlock
+        </button>
+      ) : (
+        <button
+          onClick={onViewCode}
+          disabled={status !== 'completed' || paymentStatus !== 'unlocked'}
+          className={`w-full text-xs font-bold py-1.5 px-3 rounded transition-colors shadow nodrag ${
+            (status !== 'completed' || paymentStatus !== 'unlocked') ? 'bg-gray-800 text-gray-600' : 'bg-pink-600 hover:bg-pink-500 text-white'
+          }`}
+        >
+          View React Code
+        </button>
+      )}
     </div>
   );
 }

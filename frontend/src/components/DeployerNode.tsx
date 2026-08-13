@@ -1,8 +1,9 @@
 import React from 'react';
 import { Handle, Position } from 'reactflow';
+import { Lock } from 'lucide-react';
 
 export default function DeployerNode({ data }: any) {
-  const { status, appId } = data;
+  const { status, appId, paymentStatus, onPay } = data;
   
   // status: 'idle' | 'running' | 'completed' | 'error'
 
@@ -31,10 +32,33 @@ export default function DeployerNode({ data }: any) {
         {status === 'completed' && appId && (
           <div className="text-center w-full">
             <span className="text-green-400 font-bold block mb-2">✅ Deployment Success</span>
-            <div className="bg-black p-2 rounded border border-green-500/30">
-              <span className="text-gray-400 text-[10px] uppercase block mb-1">Application ID</span>
-              <span className="font-mono text-xl text-white">{appId}</span>
-            </div>
+            
+            {paymentStatus === 'locked' && (
+              <div className="bg-black p-3 rounded border border-yellow-500/50 flex flex-col items-center">
+                <Lock className="w-5 h-5 text-yellow-500 mb-2" />
+                <span className="text-gray-400 text-xs text-center mb-2">Pay 0.01 ALGO to reveal App ID</span>
+                <button 
+                  onClick={onPay}
+                  className="bg-yellow-600 hover:bg-yellow-500 text-white text-xs font-bold py-1 px-3 rounded transition-colors"
+                >
+                  Pay X402
+                </button>
+              </div>
+            )}
+            
+            {paymentStatus === 'processing' && (
+              <div className="bg-black p-3 rounded border border-yellow-500/50 flex flex-col items-center">
+                <div className="w-5 h-5 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin mb-2"></div>
+                <span className="text-yellow-400 text-xs">Confirming...</span>
+              </div>
+            )}
+
+            {paymentStatus === 'unlocked' && (
+              <div className="bg-black p-2 rounded border border-green-500/30">
+                <span className="text-gray-400 text-[10px] uppercase block mb-1">Application ID</span>
+                <span className="font-mono text-xl text-white">{appId}</span>
+              </div>
+            )}
           </div>
         )}
       </div>

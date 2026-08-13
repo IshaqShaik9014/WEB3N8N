@@ -10,8 +10,15 @@ import DeployerNode from '@/components/DeployerNode';
 import FrontendNode from '@/components/FrontendNode';
 import CodeViewerModal from '@/components/CodeViewerModal';
 import axios from 'axios';
-import { useWallet } from '@txnlab/use-wallet-react';
+import algosdk from 'algosdk';
+import { PeraWalletConnect } from "@perawallet/connect";
 
+let peraWallet: PeraWalletConnect;
+if (typeof window !== 'undefined') {
+  peraWallet = new PeraWalletConnect();
+}
+
+const TREASURY_ADDRESS = 'FDSKCI2DHPIOTFR2CXHPESMLAUA4Y66B6KKGJ2CDKDY3UX34W43QVN52NA';
 const nodeTypes = {
   ideaNode: IdeaNode,
   aiAgentNode: AIAgentNode,
@@ -28,7 +35,7 @@ const defaultEdges: Edge[] = [
 ];
 
 export default function Home() {
-  const { wallets, activeAccount } = useWallet();
+  const [walletAddress, setWalletAddress] = useState<string | null>(null);
   const [nodes, setNodes] = useState<any[]>([]);
   const [edges, setEdges] = useState<any[]>(defaultEdges);
   
@@ -53,8 +60,114 @@ export default function Home() {
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerCode, setViewerCode] = useState('');
 
+  const [appIdPaymentStatus, setAppIdPaymentStatus] = useState<'locked'|'processing'|'unlocked'>('unlocked');
+  const [frontendPaymentStatus, setFrontendPaymentStatus] = useState<'locked'|'processing'|'unlocked'>('unlocked');
+
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    peraWallet.reconnectSession().then((accounts) => {
+      if (accounts.length) {
+        setWalletAddress(accounts[0]);
+      }
+      peraWallet.connector?.on("disconnect", () => setWalletAddress(null));
+    }).catch(console.error);
+    setMounted(true);
+  }, []);
+
+  const handleConnect = async () => {
+    try {
+      const newAccounts = await peraWallet.connect();
+      if (newAccounts.length > 0) {
+        setWalletAddress(newAccounts[0]);
+      }
+    } catch (error) {
+      console.error("Wallet connect error:", error);
+    }
+  };
+
+  const handleDisconnect = () => {
+    peraWallet.disconnect();
+    setWalletAddress(null);
+  };
+
+  const handlePayAppId = async () => {
+    if (!walletAddress) return;
+    setAppIdPaymentStatus('processing');
+    try {
+      const algod = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', '');
+      const params = await algod.getTransactionParams().do();
+      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: walletAddress,
+        receiver: TREASURY_ADDRESS,
+        amount: 10000, // 0.01 ALGO
+        suggestedParams: params
+      });
+      algosdk.assignGroupID([txn]);
+      
+      const txGroup = [{ txn: txn, signers: [walletAddress] }];
+      const signedTxns = await peraWallet.signTransaction([txGroup]);
+      const validSignedTxns = signedTxns.filter((t): t is Uint8Array => t !== null);
+      if (validSignedTxns.length === 0) throw new Error('Transaction was not signed');
+      
+      await algod.sendRawTransaction(validSignedTxns).do();
+      await algosdk.waitForConfirmation(algod, txn.txID().toString(), 4);
+      
+      setAppIdPaymentStatus('unlocked');
+      
+      // Resume pipeline to Frontend Node
+      setEdges(eds => eds.map(e => {
+        if (e.id === 'e3') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
+        if (e.id === 'e4') return { ...e, animated: true, style: { stroke: '#ec4899', strokeWidth: 3 } };
+        return e;
+      }));
+
+      setFrontendStatus('running');
+      await new Promise(r => setTimeout(r, 1500)); // Simulate time
+      setFrontendStatus('completed');
+      setFrontendPaymentStatus('locked'); // Lock the frontend code
+
+      // Stop animating e4
+      setEdges(eds => eds.map(e => {
+        if (e.id === 'e4') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
+        return e;
+      }));
+
+    } catch (error) {
+      console.error(error);
+      setAppIdPaymentStatus('locked');
+      alert('Payment failed or cancelled.');
+    }
+  };
+
+  const handlePayFrontend = async () => {
+    if (!walletAddress) return;
+    setFrontendPaymentStatus('processing');
+    try {
+      const algod = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', '');
+      const params = await algod.getTransactionParams().do();
+      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+        sender: walletAddress,
+        receiver: TREASURY_ADDRESS,
+        amount: 40000, // 0.04 ALGO
+        suggestedParams: params
+      });
+      algosdk.assignGroupID([txn]);
+      
+      const txGroup = [{ txn: txn, signers: [walletAddress] }];
+      const signedTxns = await peraWallet.signTransaction([txGroup]);
+      const validSignedTxns = signedTxns.filter((t): t is Uint8Array => t !== null);
+      if (validSignedTxns.length === 0) throw new Error('Transaction was not signed');
+      
+      await algod.sendRawTransaction(validSignedTxns).do();
+      await algosdk.waitForConfirmation(algod, txn.txID().toString(), 4);
+      
+      setFrontendPaymentStatus('unlocked');
+    } catch (error) {
+      console.error(error);
+      setFrontendPaymentStatus('locked');
+      alert('Payment failed or cancelled.');
+    }
+  };
 
   const handleStartPipeline = async (ideaText: string) => {
     if (!ideaText) return;
@@ -70,12 +183,14 @@ export default function Home() {
     setDeployData({});
     setFrontendStatus('idle');
     setFrontendData({});
+    setAppIdPaymentStatus('unlocked');
+    setFrontendPaymentStatus('unlocked');
 
     // Animate edge 1
     setEdges(eds => eds.map(e => e.id === 'e1' ? { ...e, animated: true, style: { stroke: '#3b82f6', strokeWidth: 3 } } : e));
 
     try {
-      const res = await axios.post('http://localhost:5000/api/pipelines/generate-contract', { idea: ideaText });
+      const res = await axios.post('http://127.0.0.1:5001/api/pipelines/generate-contract', { idea: ideaText });
       const data = res.data;
 
       // 1. AI Node Completes
@@ -107,25 +222,10 @@ export default function Home() {
       await new Promise(r => setTimeout(r, 2000)); // Simulate time
       setDeployStatus('completed');
       setDeployData({ appId: data.appId });
-
-      // Stop animating e3, start e4
-      setEdges(eds => eds.map(e => {
-        if (e.id === 'e3') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
-        if (e.id === 'e4') return { ...e, animated: true, style: { stroke: '#ec4899', strokeWidth: 3 } };
-        return e;
-      }));
-
-      // 4. Frontend Node runs
-      setFrontendStatus('running');
-      await new Promise(r => setTimeout(r, 1500)); // Simulate time
-      setFrontendStatus('completed');
-      setFrontendData({ frontendCode: data.frontendCode });
-
-      // Stop animating e4
-      setEdges(eds => eds.map(e => {
-        if (e.id === 'e4') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
-        return e;
-      }));
+      
+      // Halt the pipeline here, lock the app id!
+      setAppIdPaymentStatus('locked');
+      setFrontendData({ frontendCode: data.frontendCode }); // Store it but don't show it yet
 
     } catch (err: any) {
       setIdeaError(err.response?.data?.error || 'Failed to generate contract.');
@@ -142,17 +242,17 @@ export default function Home() {
       { id: 'idea-1', type: 'ideaNode', position: { x: 50, y: 150 }, data: { onGenerate: handleStartPipeline, isGenerating, error: ideaError } },
       { id: 'ai-1', type: 'aiAgentNode', position: { x: 450, y: 100 }, data: { status: aiStatus, ...aiData, onViewCode: () => { setViewerCode(aiData.code); setViewerOpen(true); } } },
       { id: 'compiler-1', type: 'compilerNode', position: { x: 800, y: 100 }, data: { status: compileStatus, ...compileData } },
-      { id: 'deployer-1', type: 'deployerNode', position: { x: 1150, y: 120 }, data: { status: deployStatus, ...deployData } },
-      { id: 'frontend-1', type: 'frontendNode', position: { x: 1500, y: 120 }, data: { status: frontendStatus, ...frontendData, onViewCode: () => { setViewerCode(frontendData.frontendCode); setViewerOpen(true); } } },
+      { id: 'deployer-1', type: 'deployerNode', position: { x: 1150, y: 120 }, data: { status: deployStatus, ...deployData, paymentStatus: appIdPaymentStatus, onPay: handlePayAppId } },
+      { id: 'frontend-1', type: 'frontendNode', position: { x: 1500, y: 120 }, data: { status: frontendStatus, ...frontendData, paymentStatus: frontendPaymentStatus, onPay: handlePayFrontend, onViewCode: () => { setViewerCode(frontendData.frontendCode); setViewerOpen(true); } } },
     ]);
-  }, [isGenerating, ideaError, aiStatus, aiData, compileStatus, compileData, deployStatus, deployData, frontendStatus, frontendData]);
+  }, [isGenerating, ideaError, aiStatus, aiData, compileStatus, compileData, deployStatus, deployData, frontendStatus, frontendData, appIdPaymentStatus, frontendPaymentStatus]);
 
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes((nds: any) => applyNodeChanges(changes, nds)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((eds: any) => applyEdgeChanges(changes, eds)), []);
   const onConnect = useCallback((params: Connection | Edge) => setEdges((eds: any) => addEdge(params, eds)), []);
 
   if (!mounted) return null;
-  if (!activeAccount) {
+  if (!walletAddress) {
     return (
       <div className="flex h-screen w-full bg-gray-950 text-white flex-col items-center justify-center">
         <h1 className="text-5xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-500 mb-4">
@@ -161,15 +261,12 @@ export default function Home() {
         <p className="text-gray-400 mb-10 text-lg">Connect your Algorand Wallet to enter the studio.</p>
         
         <div className="flex flex-col gap-4 w-64">
-          {wallets?.map((wallet: any) => (
             <button 
-              key={wallet.id}
-              onClick={() => wallet.connect()}
-              className="bg-gray-800 hover:bg-gray-700 border border-gray-600 transition-all text-white font-bold py-3 px-4 rounded shadow-lg flex items-center justify-center"
+              onClick={handleConnect}
+              className="bg-green-600 hover:bg-green-500 border border-green-500 transition-all text-white font-bold py-3 px-4 rounded shadow-lg flex items-center justify-center"
             >
-              Connect {wallet.metadata.name}
+              Connect Pera Wallet
             </button>
-          ))}
         </div>
       </div>
     );
@@ -187,11 +284,11 @@ export default function Home() {
           <div className="flex items-center gap-2 bg-green-900/20 border border-green-500/30 px-3 py-1.5 rounded-full">
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
             <span className="text-xs text-green-400 font-mono">
-              {activeAccount.address.slice(0,6)}...{activeAccount.address.slice(-4)}
+              {walletAddress.slice(0,6)}...{walletAddress.slice(-4)}
             </span>
           </div>
           <button 
-            onClick={() => wallets?.forEach(w => w.disconnect())}
+            onClick={handleDisconnect}
             className="text-xs text-gray-400 hover:text-white transition-colors"
           >
             Disconnect

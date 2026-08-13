@@ -123,7 +123,6 @@ router.post('/generate-contract', async (req, res) => {
     // 4. Deploy using Deployer Agent
     console.log(`[Generate Contract] Deploying generated TEAL to testnet...`);
     const appId = await deployContract(approvalTeal, clearTeal, abiJson);
-    
     // 3. Return results
     res.json({
       success: true,
