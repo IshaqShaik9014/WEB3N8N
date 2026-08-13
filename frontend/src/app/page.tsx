@@ -12,13 +12,13 @@ import CodeViewerModal from '@/components/CodeViewerModal';
 import axios from 'axios';
 import algosdk from 'algosdk';
 import { PeraWalletConnect } from "@perawallet/connect";
+import Link from 'next/link';
 
 let peraWallet: PeraWalletConnect;
 if (typeof window !== 'undefined') {
   peraWallet = new PeraWalletConnect();
 }
 
-const TREASURY_ADDRESS = 'FDSKCI2DHPIOTFR2CXHPESMLAUA4Y66B6KKGJ2CDKDY3UX34W43QVN52NA';
 const nodeTypes = {
   ideaNode: IdeaNode,
   aiAgentNode: AIAgentNode,
@@ -42,6 +42,7 @@ export default function Home() {
   // Pipeline State
   const [isGenerating, setIsGenerating] = useState(false);
   const [ideaError, setIdeaError] = useState('');
+  const [currentContractId, setCurrentContractId] = useState('');
   
   // Node Specific Data & Status
   const [aiStatus, setAiStatus] = useState<'idle'|'running'|'completed'>('idle');
@@ -74,6 +75,22 @@ export default function Home() {
     setMounted(true);
   }, []);
 
+  // Pre-fill Idea if passed via URL for editing
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const urlParams = new URLSearchParams(window.location.search);
+      const prefillIdea = urlParams.get('idea');
+      if (prefillIdea) {
+        setNodes((nds) => nds.map((n) => {
+          if (n.id === 'idea-1') {
+            return { ...n, data: { ...n.data, prefillValue: prefillIdea } };
+          }
+          return n;
+        }));
+      }
+    }
+  }, [mounted]);
+
   const handleConnect = async () => {
     try {
       const newAccounts = await peraWallet.connect();
@@ -90,30 +107,58 @@ export default function Home() {
     setWalletAddress(null);
   };
 
-  const handlePayAppId = async () => {
-    if (!walletAddress) return;
+  const handleDeployContract = async () => {
+    if (!walletAddress || !currentContractId) return;
     setAppIdPaymentStatus('processing');
     try {
-      const algod = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', '');
-      const params = await algod.getTransactionParams().do();
-      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: walletAddress,
-        receiver: TREASURY_ADDRESS,
-        amount: 10000, // 0.01 ALGO
-        suggestedParams: params
-      });
-      algosdk.assignGroupID([txn]);
-      
-      const txGroup = [{ txn: txn, signers: [walletAddress] }];
-      const signedTxns = await peraWallet.signTransaction([txGroup]);
-      const validSignedTxns = signedTxns.filter((t): t is Uint8Array => t !== null);
-      if (validSignedTxns.length === 0) throw new Error('Transaction was not signed');
-      
-      await algod.sendRawTransaction(validSignedTxns).do();
-      await algosdk.waitForConfirmation(algod, txn.txID().toString(), 4);
-      
+      let res;
+      try {
+        // Step 1: Attempt deploy without payment
+        res = await axios.post(`https://web3n8n.onrender.com/api/pipelines/deploy-contract/${currentContractId}`);
+      } catch (err: any) {
+        if (err.response?.status === 402) {
+          // Step 2: True x402 Intercept Flow
+          const { amount, receiver } = err.response.data;
+          
+          setDeployData({ customMessage: `Awaiting Pera Signature (${amount / 1000000} ALGO)` });
+          
+          const algod = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', '');
+          const params = await algod.getTransactionParams().do();
+          const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+            sender: walletAddress,
+            receiver: receiver,
+            amount: amount,
+            suggestedParams: params
+          });
+          algosdk.assignGroupID([txn]);
+          
+          const txGroup = [{ txn: txn, signers: [walletAddress] }];
+          const signedTxns = await peraWallet.signTransaction([txGroup]);
+          const validSignedTxns = signedTxns.filter((t): t is Uint8Array => t !== null);
+          if (validSignedTxns.length === 0) throw new Error('Transaction was not signed');
+          
+          const signedBytes = validSignedTxns[0];
+          const signedBase64 = Buffer.from(signedBytes).toString('base64');
+          
+          setDeployStatus('running');
+          setDeployData({ customMessage: `Broadcasting Payment & Deploying TEAL...` });
+
+          // Step 3: Retry with signed payment
+          res = await axios.post(`https://web3n8n.onrender.com/api/pipelines/deploy-contract/${currentContractId}`, {}, {
+            headers: { 'x-payment': signedBase64 }
+          });
+        } else {
+          throw err;
+        }
+      }
+
       setAppIdPaymentStatus('unlocked');
       
+      // Update Deployer node
+      const { appId, frontendCode } = res.data;
+      setDeployStatus('completed');
+      setDeployData({ appId });
+
       // Resume pipeline to Frontend Node
       setEdges(eds => eds.map(e => {
         if (e.id === 'e3') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
@@ -122,11 +167,11 @@ export default function Home() {
       }));
 
       setFrontendStatus('running');
-      await new Promise(r => setTimeout(r, 1500)); // Simulate time
+      await new Promise(r => setTimeout(r, 1000));
       setFrontendStatus('completed');
-      setFrontendPaymentStatus('locked'); // Lock the frontend code
+      setFrontendPaymentStatus('unlocked'); // Unlock automatically since they paid deployment cost
+      setFrontendData({ frontendCode });
 
-      // Stop animating e4
       setEdges(eds => eds.map(e => {
         if (e.id === 'e4') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
         return e;
@@ -135,48 +180,21 @@ export default function Home() {
     } catch (error) {
       console.error(error);
       setAppIdPaymentStatus('locked');
-      alert('Payment failed or cancelled.');
-    }
-  };
-
-  const handlePayFrontend = async () => {
-    if (!walletAddress) return;
-    setFrontendPaymentStatus('processing');
-    try {
-      const algod = new algosdk.Algodv2('', 'https://testnet-api.algonode.cloud', '');
-      const params = await algod.getTransactionParams().do();
-      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: walletAddress,
-        receiver: TREASURY_ADDRESS,
-        amount: 40000, // 0.04 ALGO
-        suggestedParams: params
-      });
-      algosdk.assignGroupID([txn]);
-      
-      const txGroup = [{ txn: txn, signers: [walletAddress] }];
-      const signedTxns = await peraWallet.signTransaction([txGroup]);
-      const validSignedTxns = signedTxns.filter((t): t is Uint8Array => t !== null);
-      if (validSignedTxns.length === 0) throw new Error('Transaction was not signed');
-      
-      await algod.sendRawTransaction(validSignedTxns).do();
-      await algosdk.waitForConfirmation(algod, txn.txID().toString(), 4);
-      
-      setFrontendPaymentStatus('unlocked');
-    } catch (error) {
-      console.error(error);
-      setFrontendPaymentStatus('locked');
+      setDeployData({});
+      setDeployStatus('idle');
       alert('Payment failed or cancelled.');
     }
   };
 
   const handleStartPipeline = async (ideaText: string) => {
-    if (!ideaText) return;
+    if (!ideaText || !walletAddress) return;
     setIsGenerating(true);
     setIdeaError('');
+    setCurrentContractId('');
     
     // Reset all statuses
     setAiStatus('running');
-    setAiData({});
+    setAiData({ customMessage: 'Analyzing Idea, Writing TEALScript, Compiling & Saving to MongoDB...' });
     setCompileStatus('idle');
     setCompileData({});
     setDeployStatus('idle');
@@ -186,18 +204,18 @@ export default function Home() {
     setAppIdPaymentStatus('unlocked');
     setFrontendPaymentStatus('unlocked');
 
-    // Animate edge 1
     setEdges(eds => eds.map(e => e.id === 'e1' ? { ...e, animated: true, style: { stroke: '#3b82f6', strokeWidth: 3 } } : e));
 
     try {
-      const res = await axios.post('https://web3n8n.onrender.com/api/pipelines/generate-contract', { idea: ideaText });
+      const res = await axios.post('https://web3n8n.onrender.com/api/pipelines/generate-contract', { idea: ideaText, walletAddress });
       const data = res.data;
+
+      setCurrentContractId(data.contractId);
 
       // 1. AI Node Completes
       setAiStatus('completed');
       setAiData({ code: data.code, explanation: data.explanation, securityReview: data.securityReview });
       
-      // Stop animating e1, start e2
       setEdges(eds => eds.map(e => {
         if (e.id === 'e1') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
         if (e.id === 'e2') return { ...e, animated: true, style: { stroke: '#f97316', strokeWidth: 3 } };
@@ -206,30 +224,24 @@ export default function Home() {
 
       // 2. Compiler Node runs
       setCompileStatus('running');
-      await new Promise(r => setTimeout(r, 1500)); // Simulate time
+      await new Promise(r => setTimeout(r, 1500));
       setCompileStatus('completed');
       setCompileData({ abi: data.abi });
 
-      // Stop animating e2, start e3
       setEdges(eds => eds.map(e => {
         if (e.id === 'e2') return { ...e, animated: false, style: { stroke: '#22c55e', strokeWidth: 2 } };
         if (e.id === 'e3') return { ...e, animated: true, style: { stroke: '#eab308', strokeWidth: 3 } };
         return e;
       }));
 
-      // 3. Deployer Node runs
-      setDeployStatus('running');
-      await new Promise(r => setTimeout(r, 2000)); // Simulate time
-      setDeployStatus('completed');
-      setDeployData({ appId: data.appId });
-      
-      // Halt the pipeline here, lock the app id!
+      // 3. Deployer Node (Halt for Payment)
+      setDeployStatus('idle');
       setAppIdPaymentStatus('locked');
-      setFrontendData({ frontendCode: data.frontendCode }); // Store it but don't show it yet
-
+      
     } catch (err: any) {
       setIdeaError(err.response?.data?.error || 'Failed to generate contract.');
       setAiStatus('idle');
+      setAiData({});
       setEdges(defaultEdges);
     }
     
@@ -239,11 +251,11 @@ export default function Home() {
   // Initialize nodes
   useEffect(() => {
     setNodes([
-      { id: 'idea-1', type: 'ideaNode', position: { x: 50, y: 150 }, data: { onGenerate: handleStartPipeline, isGenerating, error: ideaError } },
+      { id: 'idea-1', type: 'ideaNode', position: { x: 50, y: 150 }, data: { onGenerate: handleStartPipeline, isGenerating, error: ideaError, prefillValue: '' } },
       { id: 'ai-1', type: 'aiAgentNode', position: { x: 450, y: 100 }, data: { status: aiStatus, ...aiData, onViewCode: () => { setViewerCode(aiData.code); setViewerOpen(true); } } },
       { id: 'compiler-1', type: 'compilerNode', position: { x: 800, y: 100 }, data: { status: compileStatus, ...compileData } },
-      { id: 'deployer-1', type: 'deployerNode', position: { x: 1150, y: 120 }, data: { status: deployStatus, ...deployData, paymentStatus: appIdPaymentStatus, onPay: handlePayAppId } },
-      { id: 'frontend-1', type: 'frontendNode', position: { x: 1500, y: 120 }, data: { status: frontendStatus, ...frontendData, paymentStatus: frontendPaymentStatus, onPay: handlePayFrontend, onViewCode: () => { setViewerCode(frontendData.frontendCode); setViewerOpen(true); } } },
+      { id: 'deployer-1', type: 'deployerNode', position: { x: 1150, y: 120 }, data: { status: deployStatus, ...deployData, paymentStatus: appIdPaymentStatus, onPay: handleDeployContract } },
+      { id: 'frontend-1', type: 'frontendNode', position: { x: 1500, y: 120 }, data: { status: frontendStatus, ...frontendData, paymentStatus: frontendPaymentStatus, onPay: () => {}, onViewCode: () => { setViewerCode(frontendData.frontendCode); setViewerOpen(true); } } },
     ]);
   }, [isGenerating, ideaError, aiStatus, aiData, compileStatus, compileData, deployStatus, deployData, frontendStatus, frontendData, appIdPaymentStatus, frontendPaymentStatus]);
 
@@ -280,7 +292,10 @@ export default function Home() {
         <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-500">
           Web3N8N <span className="text-gray-500 text-sm font-normal ml-2">Studio</span>
         </h1>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-6">
+          <Link href="/history" className="text-sm font-medium text-gray-300 hover:text-white transition-colors">
+            History
+          </Link>
           <div className="flex items-center gap-2 bg-green-900/20 border border-green-500/30 px-3 py-1.5 rounded-full">
             <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></div>
             <span className="text-xs text-green-400 font-mono">

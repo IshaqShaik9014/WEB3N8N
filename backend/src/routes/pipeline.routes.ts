@@ -106,36 +106,99 @@ router.post('/:id/run', async (req, res) => {
   }
 });
 
+import ContractHistory from '../models/ContractHistory';
 import { generateAndCompileContract } from '../services/ai-contract.service';
-import { deployContract } from '../services/algorand.service';
+import { deployContract, getDeploymentCost, broadcastPaymentTxn, TREASURY_ADDRESS } from '../services/algorand.service';
 
 router.post('/generate-contract', async (req, res) => {
   try {
-    const { idea } = req.body;
-    if (!idea) {
-      return res.status(400).json({ error: 'Idea is required' });
-    }
+    const { idea, walletAddress } = req.body;
+    if (!idea) return res.status(400).json({ error: 'Idea is required' });
 
-    // 3. Generate TEAL using AI Service
     console.log(`[Generate Contract] Idea: ${idea}`);
     const { code, approvalTeal, clearTeal, abiJson, explanation, securityReview, frontendCode } = await generateAndCompileContract(idea);
+    
+    const deployCost = getDeploymentCost();
 
-    // 4. Deploy using Deployer Agent
-    console.log(`[Generate Contract] Deploying generated TEAL to testnet...`);
-    const appId = await deployContract(approvalTeal, clearTeal, abiJson);
-    // 3. Return results
+    const history = new ContractHistory({
+      creatorWallet: walletAddress || 'Unknown',
+      idea,
+      code,
+      approvalTeal,
+      clearTeal,
+      abiJson,
+      frontendCode,
+      deployCost
+    });
+    await history.save();
+
     res.json({
       success: true,
-      appId,
+      contractId: history._id,
+      deployCost,
       code,
       explanation,
       securityReview,
-      frontendCode,
       abi: abiJson
     });
   } catch (error: any) {
     console.error(error);
     res.status(500).json({ error: error.message || 'Generation failed' });
+  }
+});
+
+router.post('/deploy-contract/:contractId', async (req, res) => {
+  try {
+    const history = await ContractHistory.findById(req.params.contractId);
+    if (!history) return res.status(404).json({ error: 'Contract not found' });
+    if (history.appId) return res.status(400).json({ error: 'Contract already deployed', appId: history.appId });
+
+    const paymentTxnBytes = req.headers['x-payment'] as string;
+    
+    // True x402 Intercept
+    if (!paymentTxnBytes) {
+      return res.status(402).json({
+        error: 'Payment Required',
+        amount: history.deployCost,
+        receiver: TREASURY_ADDRESS
+      });
+    }
+
+    // Process Payment
+    console.log(`[Deploy Contract] Processing x402 Payment for contract ${history._id}`);
+    await broadcastPaymentTxn(paymentTxnBytes);
+
+    // Deploy Contract
+    console.log(`[Deploy Contract] Payment confirmed! Deploying TEAL to testnet...`);
+    const appId = await deployContract(history.approvalTeal, history.clearTeal, history.abiJson);
+    
+    // Post-Process Frontend Code
+    let finalFrontendCode = history.frontendCode.replace(/YOUR_APP_ID_HERE/g, appId.toString());
+    finalFrontendCode = finalFrontendCode.replace(/0x0000000000000000000000000000000000000000/g, appId.toString());
+
+    history.appId = appId;
+    history.frontendCode = finalFrontendCode;
+    await history.save();
+
+    res.json({
+      success: true,
+      appId,
+      frontendCode: finalFrontendCode
+    });
+  } catch (error: any) {
+    console.error(error);
+    res.status(500).json({ error: error.message || 'Deployment failed' });
+  }
+});
+
+router.get('/history/:walletAddress', async (req, res) => {
+  try {
+    const history = await ContractHistory.find({ creatorWallet: req.params.walletAddress })
+      .sort({ createdAt: -1 })
+      .select('-approvalTeal -clearTeal -code -abiJson'); // don't send huge payloads for the list
+    res.json(history);
+  } catch (error: any) {
+    res.status(500).json({ error: 'Failed to fetch history' });
   }
 });
 

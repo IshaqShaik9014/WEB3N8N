@@ -46,6 +46,7 @@ STRICT RULES FOR THE TEALSCRIPT CODE:
 3. ONLY use valid TEALScript types like uint64, string, Address, AssetID, etc.
 4. Do NOT use decorators like @abi.view. Just write normal class methods.
 5. You MUST NOT define a constructor or createApplication method that takes arguments. The contract must be deployable with NO arguments.
+6. In the React <frontend> component, when creating the contract client, you MUST use the literal string "YOUR_APP_ID_HERE" in place of the app ID. Do NOT hardcode a number.
 `;
 
   const scratchDir = path.join(__dirname, '../../scratch');

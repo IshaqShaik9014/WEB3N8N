@@ -10,7 +10,7 @@ const algodServer = process.env.ALGOD_ADDRESS || 'https://testnet-api.algonode.c
 const algodPort = '';
 const algodClient = new algosdk.Algodv2(algodToken, algodServer, algodPort);
 
-const RECEIVER_ADDRESS = 'FDSKCI2DHPIOTFR2CXHPESMLAUA4Y66B6KKGJ2CDKDY3UX34W43QVN52NA';
+export const TREASURY_ADDRESS = 'FDSKCI2DHPIOTFR2CXHPESMLAUA4Y66B6KKGJ2CDKDY3UX34W43QVN52NA';
 const GOPLAUSIBLE_FACILITATOR = process.env.GOPLAUSIBLE_FACILITATOR_URL || 'https://facilitator.goplausible.xyz';
 
 export const createWallet = () => {
@@ -20,6 +20,30 @@ export const createWallet = () => {
     address: account.addr,
     mnemonic
   };
+};
+
+export const getDeploymentCost = () => {
+  // Base App Fee: 100,000
+  // Global Int Cost: 28,500 * 4 = 114,000
+  // Global ByteSlice Cost: 50,000 * 2 = 100,000
+  // Flat Txn Fee: 1,000
+  // Total exact cost = 315,000 microAlgos
+  return 315000;
+};
+
+export const broadcastPaymentTxn = async (signedTxnBase64: string) => {
+  try {
+    const signedBytes = new Uint8Array(Buffer.from(signedTxnBase64, 'base64'));
+    const sendResponse = await algodClient.sendRawTransaction(signedBytes).do();
+    const txId = (sendResponse as any).txId || (sendResponse as any).txid || sendResponse;
+    console.log(`[x402] Payment transaction broadcasted: ${txId}`);
+    await algosdk.waitForConfirmation(algodClient, txId, 4);
+    console.log(`[x402] Payment confirmed!`);
+    return txId;
+  } catch (error: any) {
+    console.error(`[x402 Broadcast Error]`, error);
+    throw new Error('Failed to verify or broadcast the x402 payment.');
+  }
 };
 
 export const executeRealX402Payment = async (agentMnemonic: string, toolName: string) => {
@@ -34,7 +58,7 @@ export const executeRealX402Payment = async (agentMnemonic: string, toolName: st
 
     const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
       sender: account.addr,
-      receiver: RECEIVER_ADDRESS,
+      receiver: TREASURY_ADDRESS,
       amount: amount,
       suggestedParams: suggestedParams,
       note: new Uint8Array(Buffer.from(`Web3N8N x402 Payment for ${toolName}`))
@@ -74,12 +98,6 @@ export const deployContract = async (approvalTeal: string, clearTeal: string, ab
   // We need a funded deployer wallet. We check env for DEPLOYER_MNEMONIC
   const mnemonic = process.env.DEPLOYER_MNEMONIC;
   if (!mnemonic) {
-    const newAcc = algosdk.generateAccount();
-    const newMnemonic = algosdk.secretKeyToMnemonic(newAcc.sk);
-    console.log('\n\n!!! NO DEPLOYER_MNEMONIC FOUND IN .env !!!');
-    console.log('To deploy smart contracts, you need a funded wallet.');
-    console.log(`Add this to your backend/.env:\nDEPLOYER_MNEMONIC="${newMnemonic}"`);
-    console.log(`Then fund this address on the testnet dispenser:\n${newAcc.addr}\n\n`);
     throw new Error(`Deployment wallet not configured. See backend logs for setup instructions.`);
   }
 

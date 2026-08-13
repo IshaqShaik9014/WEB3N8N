@@ -21,7 +21,7 @@ export default function AIAgentNode({ data }: any) {
 
       <div className="text-xs text-gray-300 bg-black/50 p-3 rounded mb-3 flex-grow h-32 overflow-y-auto">
         {status === 'idle' && <span className="text-gray-500 italic">Waiting for input...</span>}
-        {status === 'running' && <span className="text-blue-300">Analyzing idea and writing TEALScript...</span>}
+        {status === 'running' && <span className="text-blue-300">{data.customMessage || "Analyzing idea and writing TEALScript..."}</span>}
         
         {status === 'completed' && (
           <div className="flex flex-col gap-2">
